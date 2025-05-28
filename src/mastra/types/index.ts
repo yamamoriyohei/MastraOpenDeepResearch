@@ -77,14 +77,17 @@ export interface SourceReference {
 
 // TypeScriptの型定義（Zodスキーマから推論）
 export type Section = z.infer<typeof SectionSchema>;
-export type Sections = z.infer<typeof SectionsSchema>;
+export type Sections = z.infer<typeof SectionsSchema>; // Type for the array of sections
 export type SearchQuery = z.infer<typeof SearchQuerySchema>;
-export type Queries = z.infer<typeof QueriesSchema>;
+export type Queries = z.infer<typeof QueriesSchema>; // Type for the array of queries
 export type Feedback = z.infer<typeof FeedbackSchema>;
 export type ReportStateInput = z.infer<typeof ReportStateInputSchema>;
 export type ReportStateOutput = z.infer<typeof ReportStateOutputSchema>;
 export type SectionState = z.infer<typeof SectionStateSchema>;
 export type SectionOutputState = z.infer<typeof SectionOutputStateSchema>;
+
+// Exporting the Zod schemas themselves for use in initModel
+export { SectionSchema, SectionsSchema, SearchQuerySchema, QueriesSchema, FeedbackSchema };
 
 // コマンド型（ジェネリック型パラメータを使用）
 export interface Command<T = string | any[]> {
