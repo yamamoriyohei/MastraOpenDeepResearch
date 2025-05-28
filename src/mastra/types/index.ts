@@ -86,8 +86,9 @@ export type ReportStateOutput = z.infer<typeof ReportStateOutputSchema>;
 export type SectionState = z.infer<typeof SectionStateSchema>;
 export type SectionOutputState = z.infer<typeof SectionOutputStateSchema>;
 
-// Exporting the Zod schemas themselves for use in initModel
-export { SectionSchema, SectionsSchema, SearchQuerySchema, QueriesSchema, FeedbackSchema };
+// The Zod schemas (SectionSchema, SectionsSchema, etc.) are already exported individually
+// when defined with `export const`. This export block is redundant.
+// export { SectionSchema, SectionsSchema, SearchQuerySchema, QueriesSchema, FeedbackSchema };
 
 // コマンド型（ジェネリック型パラメータを使用）
 export interface Command<T = string | any[]> {
