@@ -74,7 +74,7 @@ npm start
 
 ### DeepResearch
 
-特定のトピックに関する包括的な調査を行い、構造化されたレポートを生成します。
+特定のトピックに関する包括的な調査を行い、構造化されたレポートを生成。
 
 1. **レポート計画の生成**: トピックに基づいて適切なセクション構成を計画
 2. **検索クエリの生成**: 各セクションに関連する効果的な検索クエリを作成
@@ -97,7 +97,6 @@ Postgresによる実装に移行予定。
 
 ## 設定オプション
 
-`mastra.config.js`ファイルで以下の設定を変更できます：
 
 ```javascript
 // 検索設定
@@ -137,13 +136,13 @@ MastraOpenDeepResearch/
 
 ### APIキーの問題
 
-- OpenAI APIキーが正しく設定されていることを確認してください
-- Tavily APIキーが正しく設定されていることを確認してください
+- OpenAI APIキーが正しく設定されていることを確認
+- Tavily APIキーが正しく設定されていることを確認
 
 ### メモリ関連の問題
 
-- SQLiteデータベースファイル（`mastra.db`）が書き込み可能であることを確認してください
-- トークン制限エラーが発生した場合は、`mastra.config.js`の`memory_last_messages`の値を小さくしてみてください
+- SQLiteデータベースファイル（`mastra.db`）が書き込み可能であることを確認する
+- トークン制限エラーが発生した場合は、`mastra.config.js`の`memory_last_messages`の値を小さくする。
 
 ### 検索結果の問題
 
@@ -151,7 +150,7 @@ MastraOpenDeepResearch/
 - Tavily APIの利用制限に達していないか確認してください
 
 
-##参照
+### 参照
 
 - [Mastra](https://github.com/mastraai/mastra) - AIエージェントフレームワーク
 - [OpenDeepResearch](https://github.com/langchain-ai/open_deep_research) - deepresearchエージェント
