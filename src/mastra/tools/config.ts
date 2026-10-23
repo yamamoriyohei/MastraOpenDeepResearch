@@ -70,7 +70,13 @@ export const DEFAULT_CONFIGURATION: Configuration = {
 };
 
 /**
- * 環境変数または設定オブジェクトから設定を読み込む
+ * Loads the application configuration by merging default settings, environment variables,
+ * and any runtime overrides.
+ * Environment variables are expected to be in UPPER_SNAKE_CASE (e.g., REPORT_STRUCTURE, SEARCH_API).
+ * JSON-like string environment variables (SEARCH_API_CONFIG, PLANNER_MODEL_KWARGS, WRITER_MODEL_KWARGS)
+ * are parsed.
+ * @param configOverrides An optional partial configuration object to override defaults and environment variables.
+ * @returns A promise that resolves to the fully loaded Configuration object.
  */
 export async function loadConfig(configOverrides?: Partial<Configuration>): Promise<Configuration> {
     // 環境変数から設定を読み込む
@@ -151,7 +157,11 @@ export async function loadConfig(configOverrides?: Partial<Configuration>): Prom
 }
 
 /**
- * 実行時設定から設定を作成する
+ * Creates a configuration object from a runnable's config, typically passed
+ * by a LangChain or similar framework execution context.
+ * @param config The runnable config object, expected to have a `configurable` property
+ *               containing the configuration overrides.
+ * @returns A promise that resolves to the loaded Configuration object.
  */
 export function fromRunnableConfig(config?: any): Promise<Configuration> {
     const configurable = config && config.configurable ? config.configurable : {};

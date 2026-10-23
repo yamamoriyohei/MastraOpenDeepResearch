@@ -62,6 +62,7 @@ class TavilyClient {
 }
 
 // DuckDuckGo クライアント（実際の実装はDuckDuckGo SDKに依存）
+// TODO: This is a placeholder client. Replace with actual DuckDuckGo SDK or a more robust API client.
 class DuckDuckGoClient {
   async search(query: string, maxResults: number = 5): Promise<any[]> {
     try {
@@ -79,7 +80,9 @@ class DuckDuckGoClient {
 }
 
 /**
- * 設定値を取得するヘルパー関数
+ * Retrieves a configuration value, handling cases where it might be an object with a 'value' property.
+ * @param value The configuration value to process.
+ * @returns The actual configuration value.
  */
 export function getConfigValue(value: any): any {
   if (typeof value === 'string') {
@@ -93,7 +96,10 @@ export function getConfigValue(value: any): any {
 }
 
 /**
- * 検索APIに渡すパラメータをフィルタリングする
+ * Filters search API configuration parameters to only include those accepted by the specified search API.
+ * @param searchApi The name of the search API (e.g., "tavily").
+ * @param searchApiConfig The full configuration object for search APIs.
+ * @returns A filtered configuration object containing only parameters relevant to the specified search API.
  */
 export function getSearchParams(searchApi: string, searchApiConfig?: SearchApiConfig): SearchApiConfig {
   // 各検索APIで受け付けるパラメータを定義
@@ -117,7 +123,9 @@ export function getSearchParams(searchApi: string, searchApiConfig?: SearchApiCo
 }
 
 /**
- * セクションのリストを文字列にフォーマットする
+ * Formats a list of report sections into a single string for display or context.
+ * @param sections An array of Section objects.
+ * @returns A string representation of the sections.
  */
 export function formatSections(sections: Section[]): string {
   let formattedStr = "";
@@ -141,11 +149,20 @@ ${section.content ? section.content : '[Not yet written]'}
 
 /**
  * 検索結果のキャッシュ
+ * 注意: このキャッシュは現在の実行セッション中のみ有効なインメモリキャッシュです。
+ * 永続的なキャッシュや実行間のキャッシュが必要な場合は、
+ * LibSQLStoreや他の永続ストレージメカニズムとの統合を検討する必要があります。
  */
 const searchCache: Record<string, SearchResponse> = {};
 
 /**
- * Tavilyを使用した検索を実行する
+ * Performs searches using the Tavily API for a list of queries.
+ * Implements batching, caching (in-memory, per-run), and error handling for individual queries.
+ * @param searchQueries An array of search query strings.
+ * @param maxResults The maximum number of results per query.
+ * @param topic The topic for the search (e.g., "general", "research").
+ * @param includeRawContent Whether to include raw content in the search results.
+ * @returns A promise that resolves to an array of SearchResponse objects, maintaining original query order.
  */
 export async function tavilySearchAsync(
   searchQueries: string[],
@@ -229,19 +246,27 @@ export async function tavilySearchAsync(
 }
 
 /**
- * ウェブページをスクレイピングする
+ * Scrapes content from a list of URLs and formats it into a single string.
+ * Uses a basic HTML-to-Markdown conversion.
+ * @param titles An array of titles corresponding to the URLs.
+ * @param urls An array of URLs to scrape.
+ * @returns A promise that resolves to a formatted string containing the scraped content.
  */
 export async function scrapePages(titles: string[], urls: string[]): Promise<string> {
   // HTMLをMarkdownに変換する関数（実際の実装はmarkdownifyライブラリに依存）
   const markdownify = (html: string): string => {
-    // 実際の実装では、HTMLをMarkdownに変換するライブラリを使用
-    // ここでは簡易的な実装を示す
+    // 注意: このmarkdownify関数は非常に基本的なHTMLタグのみを処理します。
+    // JavaScriptでレンダリングされるコンテンツ、複雑なCSSレイアウト、
+    // または標準的でないHTML構造を持つ現代的なウェブページには不十分です。
+    // より堅牢なスクレイピングとコンテンツ抽出のためには、
+    // Puppeteer、Playwright、JSDOMのようなヘッドレスブラウザや、
+    // Readability.jsのような高度な記事抽出ライブラリの使用を検討してください。
     return html
       .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n\n')
       .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n\n')
       .replace(/<p[^>]*>(.*?)<\/p>/gi, '$1\n\n')
       .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '');
+      .replace(/<[^>]+>/g, ''); // Remove all other tags
   };
 
   const pages: string[] = [];
@@ -289,7 +314,11 @@ export async function scrapePages(titles: string[], urls: string[]): Promise<str
 }
 
 /**
- * DuckDuckGoを使用した検索を実行する
+ * Performs searches using a placeholder DuckDuckGo client for a list of queries.
+ * Includes retry logic, error handling, and formats results into a string similar to `scrapePages`.
+ * Note: This function currently relies on a basic placeholder for DuckDuckGo search.
+ * @param searchQueries An array of search query strings.
+ * @returns A promise that resolves to a string containing formatted search results or error messages.
  */
 export async function duckduckgoSearch(searchQueries: string[]): Promise<string> {
   const processSingleQuery = async (query: string): Promise<SearchResponse> => {
@@ -446,7 +475,11 @@ export async function duckduckgoSearch(searchQueries: string[]): Promise<string>
 }
 
 /**
- * Tavilyを使用した検索を実行し、結果をフォーマットする
+ * Performs a search using the Tavily API and formats the results.
+ * It de-duplicates results by URL and includes summaries and optional raw content.
+ * @param queries An array of query strings.
+ * @param options Configuration options for the Tavily search.
+ * @returns A promise that resolves to an object containing the formatted output string and an array of source references.
  */
 export async function tavilySearch(
   queries: string[],
@@ -538,7 +571,10 @@ export async function tavilySearch(
 }
 
 /**
- * URLが有効かどうかを確認する
+ * Validates a URL by checking its format and attempting a HEAD request.
+ * Only allows http and https protocols.
+ * @param url The URL string to validate.
+ * @returns A promise that resolves to true if the URL is valid and accessible, false otherwise.
  */
 export async function isValidUrl(url: string): Promise<boolean> {
   try {
@@ -569,7 +605,13 @@ export async function isValidUrl(url: string): Promise<boolean> {
 }
 
 /**
- * 適切な検索APIを選択して実行する
+ * Selects and executes a search using the specified search API (Tavily or DuckDuckGo).
+ * It formats the output and validates URLs for Tavily results.
+ * @param searchApi The name of the search API to use ("tavily" or "duckduckgo").
+ * @param queryList An array of query strings.
+ * @param paramsToPass Configuration parameters to pass to the search API.
+ * @returns A promise that resolves to an object containing the formatted output string and an array of source references.
+ * @throws Error if an unsupported search API is specified.
  */
 export async function selectAndExecuteSearch(
   searchApi: string,

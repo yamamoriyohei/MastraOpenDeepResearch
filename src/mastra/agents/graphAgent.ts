@@ -27,13 +27,17 @@ import {
   SectionState,
   SectionOutputState,
   Section,
-  Sections,
-  Queries,
+  // Sections type is used, SectionsSchema is the Zod schema
+  Queries, // Queries type is used, QueriesSchema is the Zod schema
   SearchQuery,
-  Feedback,
+  Feedback, // Feedback type is used, FeedbackSchema is the Zod schema
   Command,
-  SourceReference
+  SourceReference,
+  QueriesSchema, // Import static Zod schema
+  SectionsSchema, // Import static Zod schema
+  FeedbackSchema, // Import static Zod schema
 } from "../types/index.js";
+import { reportGenerationWorkflow } from "../workflows/flow"; // Import the graph
 
 // ツールの定義
 const generateReportPlanTool = createTool({
@@ -141,6 +145,33 @@ const writeSectionTool = createTool({
 });
 
 // Mastraエージェントの定義
+// -----------------------------------------------------------------------------
+// STATUS NOTICE: deepResearchAgent and Single-Agent Workflow Functions
+//
+// The `deepResearchAgent` and the associated graph node functions in this file 
+// (e.g., `generateReportPlan`, `humanFeedback`, `generateQueries`, `searchWeb`, 
+// `writeSection`, `writeFinalSections`, `gatherCompletedSections`, `compileFinalReport`, 
+// `initiateFinalSectionWriting`) were part of the original single-agent graph-based 
+// workflow (defined in `src/mastra/workflows/flow.ts`).
+//
+// CURRENT STATUS:
+// - The `deepResearchAgent` itself is still registered in `src/mastra/index.ts` 
+//   and might be usable for direct interactions if the Mastra framework supports it.
+// - The main `generateReport` function in this file (which used to call 
+//   `deepResearchAgent.generate(...)` or `reportGenerationWorkflow.run(...)`) 
+//   has been superseded by `runSupervisorWorkflow` from `supervisorAgent.ts` 
+//   as the primary entry point for report generation.
+// - Several functions from this file (`generateQueries`, `searchWeb`, `writeSection`) 
+//   are REUSED by the `ResearcherAgent` (`src/mastra/agents/researcherAgent.ts`) 
+//   as part of the new multi-agent system.
+// - The `reportGenerationWorkflow` itself (from `flow.ts`) is no longer the primary 
+//   execution path.
+//
+// This agent and its functions are kept because:
+// 1. Some functions are reused by the Researcher Agent.
+// 2. The `deepResearchAgent` might still be invokable via Mastra core for other purposes.
+// 3. They serve as a reference for the original single-agent implementation.
+// -----------------------------------------------------------------------------
 export const deepResearchAgent = new Agent({
   name: "deep-research-agent",
   instructions: `あなたは、包括的なレポートを生成する研究アシスタントです。
@@ -185,7 +216,12 @@ export const deepResearchAgent = new Agent({
 // ノード関数の実装（元のまま）
 
 /**
- * レポート計画を生成する
+ * Generates a report plan based on the given topic and optional feedback.
+ * This involves generating search queries related to the topic, performing a web search,
+ * and then generating a structured list of sections for the report.
+ * @param state The current report state, containing the topic and any feedback on previous plans.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a partial report state update with the generated sections.
  */
 export async function generateReportPlan(state: ReportState, config: any): Promise<Partial<ReportState>> {
   const topic = state.topic;
@@ -212,23 +248,10 @@ export async function generateReportPlan(state: ReportState, config: any): Promi
   // クエリを生成
   const queriesResult = await writerModel.generate({
     prompt: systemInstructionsQuery + "\nGenerate search queries that will help with planning the sections of the report.",
-    schema: {
-      type: "object",
-      properties: {
-        queries: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              search_query: { type: "string" }
-            }
-          }
-        }
-      }
-    }
+    zodSchema: QueriesSchema // Use imported Zod schema
   });
 
-  const queries = queriesResult.queries as SearchQuery[];
+  const queries = queriesResult.object.queries as SearchQuery[];
   const queryList = queries.map(q => q.search_query);
 
   // Web検索を実行
@@ -247,30 +270,20 @@ export async function generateReportPlan(state: ReportState, config: any): Promi
   // レポートセクションを生成
   const sectionsResult = await plannerModel.generate({
     prompt: systemInstructionsSections + "\nGenerate the sections of the report. Your response must include a 'sections' field containing a list of sections. Each section must have: name, description, research, and content fields.",
-    schema: {
-      type: "object",
-      properties: {
-        sections: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              description: { type: "string" },
-              research: { type: "boolean" },
-              content: { type: "string" }
-            }
-          }
-        }
-      }
-    }
+    zodSchema: SectionsSchema // Use imported Zod schema
   });
 
-  return { sections: sectionsResult.sections as Section[] };
+  return { sections: sectionsResult.object.sections as Section[] };
 }
 
 /**
- * ヒューマンフィードバックを処理する
+ * Simulates a human feedback step. In a real application, this node would pause
+ * and wait for external input. Currently, it auto-approves the plan.
+ * If approved, it transitions to 'route-tasks'. If not (a path not currently taken),
+ * it would go back to 'generate-report-plan' with feedback.
+ * @param state The current report state, including the generated sections.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a Command indicating the next step and any state updates.
  */
 export async function humanFeedback(state: ReportState, config: any): Promise<Command> {
   const topic = state.topic;
@@ -290,25 +303,39 @@ export async function humanFeedback(state: ReportState, config: any): Promise<Co
   const approved = true;
 
   if (approved) {
-    // 研究が必要なセクションの並列処理を開始
-    const researchSections = sections.filter(s => s.research);
-    return {
-      goto: researchSections.map(s => ({
-        target: "build-section-with-web-research",
-        params: { topic, section: s, search_iterations: 0 }
-      }))
-    };
+    // 承認された場合、route-tasksに移行する
+    // researchSectionsのロジックはrouteTasks内で処理されるため、ここでは不要
+    return Promise.resolve({
+      goto: "route-tasks",
+      update: {
+        topic: state.topic,
+        sections: state.sections,
+        // feedback_on_report_plan はリセットまたは維持を選択できます。
+        // ここでは、承認されたのでフィードバックはクリアされると仮定します。
+        feedback_on_report_plan: [], 
+        completed_sections: state.completed_sections || [],
+        report_sections_from_research: state.report_sections_from_research
+      }
+    });
   } else {
     // フィードバックで再生成
-    return {
+    return Promise.resolve({
       goto: "generate-report-plan",
-      update: { feedback_on_report_plan: ["ユーザーフィードバック"] }
-    };
+      update: { 
+        topic: state.topic,
+        sections: state.sections, // Keep existing sections for context if needed
+        feedback_on_report_plan: ["ユーザーフィードバック"] // Example feedback
+      }
+    });
   }
 }
 
 /**
- * セクションのための検索クエリを生成する
+ * Generates search queries for a specific section of the report.
+ * If the section description is missing, it formulates a generic query based on the section name or topic.
+ * @param state The current section state, containing the topic and the section details.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a partial section state update with the generated search queries.
  */
 export async function generateQueries(state: SectionState, config: any): Promise<Partial<SectionState>> {
   const topic = state.topic;
@@ -337,23 +364,10 @@ export async function generateQueries(state: SectionState, config: any): Promise
     // クエリを生成
     const queriesResult = await writerModel.generate({
       prompt: systemInstructions + "\nGenerate search queries on the provided topic.",
-      schema: {
-        type: "object",
-        properties: {
-          queries: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                search_query: { type: "string" }
-              }
-            }
-          }
-        }
-      }
+      zodSchema: QueriesSchema // Use imported Zod schema
     });
 
-    return { search_queries: queriesResult.queries as SearchQuery[] };
+    return { search_queries: queriesResult.object.queries as SearchQuery[] };
   }
 
   const configuration = await loadConfig();
@@ -371,27 +385,20 @@ export async function generateQueries(state: SectionState, config: any): Promise
   // クエリを生成
   const queriesResult = await writerModel.generate({
     prompt: systemInstructions + "\nGenerate search queries on the provided topic.",
-    schema: {
-      type: "object",
-      properties: {
-        queries: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              search_query: { type: "string" }
-            }
-          }
-        }
-      }
-    }
+    zodSchema: QueriesSchema // Use imported Zod schema
   });
 
-  return { search_queries: queriesResult.queries as SearchQuery[] };
+  return { search_queries: queriesResult.object.queries as SearchQuery[] };
 }
 
 /**
- * Web検索を実行する
+ * Performs a web search using the generated queries for a section.
+ * It uses the search API specified in the configuration and updates the section state
+ * with the formatted search results string and an incremented search iteration count.
+ * It also appends new, unique source references to the section.
+ * @param state The current section state, including search queries and iteration count.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a partial section state update with search results and updated iteration count.
  */
 export async function searchWeb(state: SectionState, config: any): Promise<Partial<SectionState>> {
   const searchQueries = state.search_queries;
@@ -432,7 +439,13 @@ export async function searchWeb(state: SectionState, config: any): Promise<Parti
 }
 
 /**
- * セクションを書き、評価する
+ * Writes the content for a specific section based on available search results (source string).
+ * After writing, it grades the section. If the grade is 'pass' or max search depth is reached,
+ * it marks the section as complete. Otherwise, it generates follow-up queries and transitions
+ * back to 'search-web'.
+ * @param state The current section state, including topic, section details, and search results.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a Command indicating the next step (either 'END' for this section or 'search-web').
  */
 export async function writeSection(state: SectionState, config: any): Promise<Command> {
   const topic = state.topic;
@@ -468,12 +481,12 @@ export async function writeSection(state: SectionState, config: any): Promise<Co
   }
 
   // セクションを生成（有効なURLのリストを含める）
-  const sectionContent = await writerModel.generate({
+  const sectionContentResult = await writerModel.generate({ // No schema for this call
     prompt: section_writer_instructions + "\n" + sectionWriterInputsFormatted + validSourcesText
   });
 
   // セクションの内容を更新
-  section.content = sectionContent.text;
+  section.content = sectionContentResult.text;
 
   // セクション内容からURLを抽出して検証
   const urlRegex = /\[.*?\]\((https?:\/\/[^\s)]+)\)/g;
@@ -513,24 +526,10 @@ export async function writeSection(state: SectionState, config: any): Promise<Co
 
   const feedbackResult = await plannerModel.generate({
     prompt: sectionGraderInstructionsFormatted + "\nGrade the report and consider follow-up questions for missing information. If the grade is 'pass', return empty strings for all follow-up queries. If the grade is 'fail', provide specific search queries to gather missing information.",
-    schema: {
-      type: "object",
-      properties: {
-        grade: { type: "string", enum: ["pass", "fail"] },
-        follow_up_queries: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              search_query: { type: "string" }
-            }
-          }
-        }
-      }
-    }
+    zodSchema: FeedbackSchema // Use imported Zod schema
   });
 
-  const feedback = feedbackResult as Feedback;
+  const feedback = feedbackResult.object as Feedback;
 
   // セクションが合格または最大検索深度に達した場合
   if (feedback.grade === "pass" || state.search_iterations >= configuration.max_search_depth) {
@@ -548,7 +547,11 @@ export async function writeSection(state: SectionState, config: any): Promise<Co
 }
 
 /**
- * 研究を必要としないセクションを書く
+ * Writes content for sections that do not require web research (e.g., introduction, conclusion).
+ * These sections are typically written based on the content of already completed (researched) sections.
+ * @param state The current section state, including topic, section details, and content from researched sections.
+ * @param config Optional configuration (currently unused by this node).
+ * @returns A promise that resolves to a partial section output state update with the completed section.
  */
 export async function writeFinalSections(state: SectionState, config: any): Promise<Partial<SectionOutputState>> {
   const topic = state.topic;
@@ -568,18 +571,21 @@ export async function writeFinalSections(state: SectionState, config: any): Prom
   const writerModel = await initModel(configuration.writer_provider, configuration.writer_model, configuration.writer_model_kwargs);
 
   // セクションを生成
-  const sectionContent = await writerModel.generate({
+  const sectionContentResult = await writerModel.generate({ // No schema for this call
     prompt: systemInstructions + "\nGenerate a report section based on the provided sources."
   });
 
   // セクションの内容を更新
-  section.content = sectionContent.text;
+  section.content = sectionContentResult.text;
 
   return { completed_sections: [section] };
 }
 
 /**
- * 完了したセクションを収集する
+ * Gathers all completed sections and formats their content into a single string.
+ * This string can then be used as context for writing final sections like introductions or conclusions.
+ * @param state The current report state, containing the list of all completed sections.
+ * @returns A partial report state update with the formatted string of completed sections.
  */
 export function gatherCompletedSections(state: ReportState): Partial<ReportState> {
   const completedSections = state.completed_sections;
@@ -589,7 +595,10 @@ export function gatherCompletedSections(state: ReportState): Partial<ReportState
 }
 
 /**
- * 最終レポートをコンパイルする
+ * Compiles the final report by joining the content of all sections in their original order.
+ * It also collects all unique source references from the sections and appends them to the report.
+ * @param state The final report state, containing all sections with their content and sources.
+ * @returns A report state output object containing the final compiled report string.
  */
 export function compileFinalReport(state: ReportState): ReportStateOutput {
   const sections = state.sections;
@@ -636,7 +645,12 @@ export function compileFinalReport(state: ReportState): ReportStateOutput {
 }
 
 /**
- * 最終セクション作成を開始する（条件付きエッジ）
+ * Determines which sections do not require research and prepares them for parallel writing.
+ * This function is intended for use with conditional edges or dynamic task dispatching in a graph.
+ * Note: The current graph implementation in `flow.ts` uses `routeTasks` for sequential processing,
+ * so this function might be for an alternative graph structure or future use.
+ * @param state The current report state.
+ * @returns An array of objects, each specifying a target node ('write-final-sections') and parameters for a non-research section.
  */
 export function initiateFinalSectionWriting(state: ReportState): any[] {
   // 研究を必要としないセクションの並列書き込みタスクを開始
@@ -656,102 +670,45 @@ export function initiateFinalSectionWriting(state: ReportState): any[] {
 
 
 
-async function initModel(provider: string, model: string, kwargs?: any) {
-  // Mastraのモデル初期化（実際の実装に合わせて調整が必要）
+/**
+ * Initializes a model provider based on the specified configuration.
+ * Currently, only OpenAI is supported.
+ * @param provider The name of the model provider (e.g., "openai").
+ * @param model The specific model name (e.g., "gpt-4.1").
+ * @param kwargs Optional keyword arguments for model initialization, such as temperature, topP, etc.
+ * @returns An object with a `generate` method for text or structured object generation.
+ * @throws Error if the provider is unsupported.
+ */
+async function initModel(provider: string, model: string, kwargs?: Record<string, any>) {
+  // Encapsulate OpenAI specific logic
   if (provider === "openai") {
     const openaiModel = openai(model, kwargs);
-    // AI SDKのopenaiモデルにはgenerateメソッドがないため、
-    // generateTextやgenerateObjectを使用するためのラッパーを作成
     return {
-      generate: async ({ prompt, schema }: { prompt: string, schema?: any }) => {
+      /**
+       * Generates content using the initialized OpenAI model.
+       * If a Zod schema is provided, it attempts to generate a structured object.
+       * Otherwise, it generates plain text.
+       * @param prompt The prompt to send to the model.
+       * @param zodSchema Optional Zod schema for structured output. Its `description` field can be used for debugging.
+       * @returns A promise that resolves to an object containing either the generated object (`object`) or text (`text`).
+       * @throws Error if model generation fails, including schema validation errors.
+       */
+      generate: async ({ prompt, zodSchema }: { prompt: string, zodSchema?: z.ZodTypeAny }) => {
+        const ai = await import('ai'); // Dynamically import 'ai' package
         try {
-          if (schema) {
-            // スキーマが提供されている場合はgenerateObjectを使用
-            const ai = await import('ai');
-
-            // スキーマをZodスキーマに変換
-            const { z } = await import('zod');
-
-            // Zodスキーマを作成
-            let zodSchema;
-            try {
-              // クエリスキーマの場合
-              if (schema.properties && schema.properties.queries) {
-                zodSchema = z.object({
-                  queries: z.array(
-                    z.object({
-                      search_query: z.string()
-                    })
-                  )
-                });
-              }
-              // セクションスキーマの場合
-              else if (schema.properties && schema.properties.sections) {
-                zodSchema = z.object({
-                  sections: z.array(
-                    z.object({
-                      name: z.string(),
-                      description: z.string(),
-                      research: z.boolean(),
-                      content: z.string()
-                    })
-                  )
-                });
-              }
-              // フィードバックスキーマの場合
-              else if (schema.properties && schema.properties.grade) {
-                zodSchema = z.object({
-                  grade: z.enum(["pass", "fail"]),
-                  follow_up_queries: z.array(
-                    z.object({
-                      search_query: z.string()
-                    })
-                  )
-                });
-              }
-              // その他のスキーマの場合
-              else {
-                // デフォルトのスキーマを作成
-                zodSchema = z.object({});
-                Object.keys(schema.properties || {}).forEach(key => {
-                  zodSchema = zodSchema.extend({
-                    [key]: z.any()
-                  });
-                });
-              }
-
-              console.log("Using Zod schema:", JSON.stringify(zodSchema.shape, null, 2));
-
-              const result = await ai.generateObject({
-                model: openaiModel,
-                prompt,
-                schema: zodSchema,
-                output: 'object'
-              });
-
-              // 型安全に処理
-              const resultObj = result.object as Record<string, any>;
-
-              // 結果オブジェクトを返す
-              return {
-                queries: resultObj.queries,
-                sections: resultObj.sections,
-                text: resultObj.text,
-                grade: resultObj.grade,
-                follow_up_queries: resultObj.follow_up_queries
-              };
-            } catch (schemaError) {
-              console.error('Schema creation error:', schemaError);
-              // スキーマ作成に失敗した場合はテキスト生成にフォールバック
-              const result = await ai.generateText({
-                model: openaiModel,
-                prompt
-              });
-              return { text: result.text };
-            }
+          if (zodSchema) {
+            // Use generateObject with the provided Zod schema
+            console.log("Attempting to generate object with Zod schema:", zodSchema.description || "No Zod schema description provided");
+            const result = await ai.generateObject({
+              model: openaiModel,
+              prompt,
+              schema: zodSchema, // Pass the Zod schema directly
+            });
+            // The result structure from ai.generateObject is { object: YourTypedObject }
+            return { object: result.object }; 
           } else {
-            // スキーマがない場合はgenerateTextを使用
-            const ai = await import('ai');
+            // Fallback to generateText if no schema is provided
+            console.log("Generating text (no Zod schema provided).");
             const result = await ai.generateText({
               model: openaiModel,
               prompt
@@ -760,104 +717,71 @@ async function initModel(provider: string, model: string, kwargs?: any) {
           }
         } catch (error) {
           console.error('Model generation error:', error);
-          throw error;
+          if (error instanceof Error && zodSchema) {
+             console.error(`Error details related to Zod schema (${zodSchema.description || 'N/A'}):`, error.message);
+          }
+          throw error; // Re-throw the error to be handled by the caller
         }
       }
     };
   }
-  // 他のプロバイダーのサポートを追加
+  // Placeholder for other providers
+  // else if (provider === "anthropic") { /* ... */ }
+  
   throw new Error(`Unsupported provider: ${provider}`);
 }
 
-/**
- * 会話履歴を管理するヘルパー関数
- * @param messages 会話メッセージ
- * @param maxTokens 最大トークン数
- * @returns 最適化されたメッセージ
- */
-function optimizeConversationHistory(messages: any[], maxTokens: number = 4000): any[] {
-  // メッセージが少ない場合はそのまま返す
-  if (messages.length <= 3) return messages;
-
-  // システムメッセージと最新のユーザーメッセージは常に保持
-  const systemMessages = messages.filter(m => m.role === 'system');
-  const latestUserMessages = messages.filter(m => m.role === 'user').slice(-1);
-
-  // 残りのメッセージから重要なものを選択
-  const otherMessages = messages.filter(m =>
-    m.role !== 'system' &&
-    !(m.role === 'user' && latestUserMessages.includes(m))
-  );
-
-  // 最新のメッセージを優先して保持
-  const optimizedMessages = [...systemMessages, ...otherMessages.slice(-3), ...latestUserMessages];
-
-  return optimizedMessages;
-}
+// The function optimizeConversationHistory was removed as it was identified as unused code.
 
 /**
- * レポート生成関数 - トピックに基づいてレポートを生成する（エージェントを使用）
+ * レポート生成関数 - トピックに基づいてレポートを生成する（グラフワークフローを使用）
  * @param topic レポートのトピック
- * @param options メモリオプション（オプション）
+// import { ReportStateInputSchema } from "../types/index.js"; // No longer needed here
+
+/**
+ * レポート生成関数 - トピックに基づいてレポートを生成する（グラフワークフローを使用）
+ * @param topic レポートのトピック
+ * @param options オプション（現在は未使用だが、将来の拡張のために保持）
  * @returns 生成されたレポート
  */
 export async function generateReport(
   topic: string,
-  options?: {
+  options?: { // Options are kept for potential future use (e.g., passing config to the graph)
     threadId?: string;
     resourceId?: string;
-    maxTokens?: number;
+    maxTokens?: number; // This might be relevant for models used within graph nodes
   }
 ): Promise<string> {
   try {
-    // メモリオプションを設定
-    const threadId = options?.threadId || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const resourceId = options?.resourceId || `user-${Math.random().toString(36).substring(2, 9)}`;
-    const maxTokens = options?.maxTokens || 4000;
+    console.log(`generateReport: Starting report generation for topic "${topic}" using workflow.`);
 
-    // エージェントを使用してレポートを生成
-    const userMessage = {
-      role: "user" as const,
-      content: `トピック「${topic}」に関する包括的なレポートを生成してください。
-
-以下の手順で進めてください：
-1. まず、レポート計画を生成してください（generateReportPlanToolを使用）
-2. 計画に基づいて、各セクションの研究と執筆を行ってください
-3. 最終的なレポートを作成してください`
+    // 初期状態を定義
+    // ReportStateInputSchema は topic のみを含むため、完全な ReportState を手動で作成
+    const initialState: ReportState = {
+      topic: topic,
+      sections: [], // グラフの 'generate-report-plan' ノードで設定される
+      completed_sections: [],
+      feedback_on_report_plan: [], // 初期フィードバックなし
+      // report_sections_from_research と final_report はワークフロー中に設定される
     };
 
-    // メモリを使用してエージェントを呼び出す
-    const result = await deepResearchAgent.generate([userMessage], {
-      threadId,
-      resourceId
-    });
+    // ワークフロー（グラフ）を実行
+    // reportGenerationWorkflow は src/mastra/workflows/flow.ts でエクスポートされた MastraGraph のインスタンス
+    // placeholder MastraGraph には run メソッドがあると仮定
+    const finalState = await reportGenerationWorkflow.run(initialState);
 
-    return result.text;
-  } catch (error) {
-    // トークン制限エラーの場合
-    if (error instanceof Error && error.message.includes('context length')) {
-      console.warn('トークン制限エラー、会話履歴を最適化して再試行します');
-
-      // 会話履歴を最適化して再試行
-      const threadId = options?.threadId || `report-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const resourceId = options?.resourceId || `user-${Math.random().toString(36).substring(2, 9)}`;
-
-      const userMessage = {
-        role: "user" as const,
-        content: `トピック「${topic}」に関する簡潔なレポートを生成してください。`
-      };
-
-      const result = await deepResearchAgent.generate([userMessage], {
-        threadId,
-        resourceId
-      });
-
-      return result.text + "\n\n(注: トークン制限のため、レポートは簡略化されています)";
+    if (finalState && finalState.final_report) {
+      console.log(`generateReport: Workflow completed. Final report generated for topic "${topic}".`);
+      return finalState.final_report;
+    } else {
+      console.error(`generateReport: Workflow finished but final_report is missing in the final state for topic "${topic}".`, finalState);
+      throw new Error("レポート生成に失敗しました。最終レポートが生成されませんでした。");
     }
-
-    console.error('レポート生成エラー:', error);
+  } catch (error) {
+    console.error(`generateReport: Error during report generation for topic "${topic}".`, error);
     // エラーを安全に処理
     const errorMessage = error instanceof Error ? error.message : String(error);
+    // Include the original error message for better debugging if needed
     throw new Error(`レポートの生成中にエラーが発生しました: ${errorMessage}`);
   }
 }
